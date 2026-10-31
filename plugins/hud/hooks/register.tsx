@@ -6,7 +6,7 @@ import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 import type { Action, Breakdown, Reading, TurnInfo } from '../types'
 import { contextSvg, HUE, hueFor, laneSvg, sparkSvg, terminalBar } from './draw'
 import type { Run } from './draw'
-import { alertText, burnRate, contextLevel, laneDetail, limitView, modelName, money, span, tokens } from './model'
+import { alertText, burnRate, contextLevel, laneParts, limitView, modelName, money, span, tokens } from './model'
 import type { LimitView } from './model'
 
 const reading = atom({ plugin: 'hud', key: 'reading' } as const, null)
@@ -40,27 +40,41 @@ const swallow = () => {}
 
 const refresh = async ($: EngineInterface) => {
   const [usage, model, now] = await Promise.all([$.session.usage(), $.session.model(), $.clock.now()])
+  const previous = await read($, reading)
+  const cost = usage.cost?.usd
+  // /clear starts the session over. The engine may or may not start its cost total over with it.
+  const isNewConversation = previous !== null && previous.startedAt !== usage.startedAt
+  const costBase = isNewConversation
+    ? cost !== undefined && previous.costUsd !== undefined && cost >= previous.costUsd
+      ? previous.costUsd
+      : 0
+    : (previous?.costBase ?? 0)
   const next: Reading = {
     model,
     contextTokens: usage.context.tokens,
     contextWindow: usage.context.window,
     contextPercent: usage.context.percent,
     limits: usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt })),
-    costUsd: usage.cost?.usd,
+    costUsd: cost,
+    costBase,
     startedAt: usage.startedAt,
     // Whole minutes, so countdowns redraw once a minute and no more.
     at: Math.floor(now / 60_000) * 60_000,
   }
 
-  if (JSON.stringify(await read($, reading)) !== JSON.stringify(next)) {
+  if (JSON.stringify(previous) !== JSON.stringify(next)) {
     await update($, reading, () => next)
   }
 
-  const usd = next.costUsd
-  const history = await read($, costHistory)
+  if (isNewConversation) {
+    await update($, costHistory, () => (cost === undefined ? [] : [cost - costBase]))
+  } else if (cost !== undefined) {
+    const spent = cost - costBase
+    const history = await read($, costHistory)
 
-  if (usd !== undefined && history[history.length - 1] !== usd) {
-    await update($, costHistory, old => [...old, usd].slice(-HISTORY))
+    if (history[history.length - 1] !== spent) {
+      await update($, costHistory, old => (old[old.length - 1] === spent ? old : [...old, spent].slice(-HISTORY)))
+    }
   }
 }
 
@@ -228,10 +242,14 @@ export const register: Register = on => {
     const ctxLevel = contextLevel(contextPct)
     const contextDetail = contextPct === undefined ? `${tokens(data.contextWindow)} window` : `${tokens(data.contextTokens ?? 0)} of ${tokens(data.contextWindow)} tokens`
     const contextText = contextPct === undefined ? '—' : `${contextPct}%`
-    const costText = [data.costUsd === undefined ? undefined : money(data.costUsd), burnRate(data.costUsd, data.startedAt, now)].filter(Boolean).join(' · ')
+    const spent = data.costUsd === undefined ? undefined : data.costUsd - (data.costBase ?? 0)
+    const costText = [spent === undefined ? undefined : money(spent), burnRate(spent, data.startedAt, now)].filter(Boolean).join(' · ')
     const sessionTime = span(now - data.startedAt)
 
     const warmColor = (kind: string, level: LimitView['level']) => (level === 'ok' ? undefined : hueFor(kind, level))
+    // The pace part of a lane's detail takes the lane's warm color; the reset part stays quiet.
+    const detailOf = (view: LimitView) => ({ ...laneParts(view, now), paceColor: warmColor(view.kind, view.level) ?? 'subtle' })
+    type Detail = { reset: string; pace?: string; paceColor?: string }
 
     // ---------- buttons, shared ----------
 
@@ -303,12 +321,13 @@ export const register: Register = on => {
           ),
         )
 
-      const line = (label: string, runs: Run[], color: string, percent: string, percentColor: string | undefined, detail: string) => (
+      const line = (label: string, runs: Run[], color: string, percent: string, percentColor: string | undefined, detail: Detail) => (
         <Text wrap="truncate-end">
           <Text color="subtle">{label.padEnd(9)}</Text>
           {bar(runs, color)}
           <Text bold color={percentColor}>{` ${percent.padStart(4)}`}</Text>
-          <Text color="subtle">{`  ${detail}`}</Text>
+          <Text color="subtle">{`  ${detail.reset}`}</Text>
+          {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
         </Text>
       )
 
@@ -318,7 +337,7 @@ export const register: Register = on => {
         hueFor('context', ctxLevel),
         contextText,
         warmColor('context', ctxLevel),
-        contextDetail,
+        { reset: contextDetail },
       )
       const limitLines = views.map(view =>
         line(
@@ -327,7 +346,7 @@ export const register: Register = on => {
           hueFor(view.kind, view.level),
           `${Math.round(view.used)}%`,
           warmColor(view.kind, view.level),
-          laneDetail(view, now),
+          detailOf(view),
         ),
       )
       const { model, effort } = turnInfo
@@ -364,19 +383,21 @@ export const register: Register = on => {
 
     // ---------- desktop ----------
 
-    const lane = (key: string, label: string, svg: string, alt: string, percent: string, percentColor: string | undefined, detail: string) => (
+    // Only an SVG that animates needs the sandboxed frame; the rest draw as plain images.
+    const lane = (key: string, label: string, svg: string, alt: string, isAnimated: boolean, percent: string, percentColor: string | undefined, detail: Detail) => (
       <Box key={key} flexDirection="row" alignItems="center" columnGap={1}>
         <Box width={8}>
           <Text color="subtle">{label}</Text>
         </Box>
-        <Svg source={svg} alt={alt} width={190} height={16} />
+        {isAnimated ? <Svg source={svg} alt={alt} width={190} height={16} isInteractive /> : <Svg source={svg} alt={alt} width={190} height={16} />}
         <Box width={5} justifyContent="flex-end">
           <Text bold tabular color={percentColor}>
             {percent}
           </Text>
         </Box>
         <Text color="subtle" wrap="truncate-end">
-          {detail}
+          {detail.reset}
+          {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
         </Text>
       </Box>
     )
@@ -387,12 +408,22 @@ export const register: Register = on => {
         'Context',
         contextSvg(contextPct ?? 0, (parts?.segments ?? []).map(segment => segment.tokens), parts?.autoCompactAt, e.props.isWorking, ctxLevel),
         contextPct === undefined ? 'Context: no reading yet' : `Context ${contextPct}% used`,
+        e.props.isWorking,
         contextText,
         warmColor('context', ctxLevel),
-        contextDetail,
+        { reset: contextDetail },
       ),
       ...views.map(view =>
-        lane(`limit-${view.kind}`, view.label, laneSvg(view), `${view.label} ${Math.round(view.used)}% used`, `${Math.round(view.used)}%`, warmColor(view.kind, view.level), laneDetail(view, now)),
+        lane(
+          `limit-${view.kind}`,
+          view.label,
+          laneSvg(view),
+          `${view.label} ${Math.round(view.used)}% used`,
+          view.runsOutAt !== undefined,
+          `${Math.round(view.used)}%`,
+          warmColor(view.kind, view.level),
+          detailOf(view),
+        ),
       ),
     ]
 

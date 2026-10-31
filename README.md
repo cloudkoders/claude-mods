@@ -20,7 +20,7 @@ Then install the mods you want:
 claude plugin install hud@claude-mods
 ```
 
-Start a new Claude Code session to load them. They're built and tested against Claude Code 2.1.316.
+They load right away; if one doesn't show up, run `/reload-plugins` or start a new session. They're built and tested against Claude Code 2.1.316.
 
 To update later:
 
@@ -36,7 +36,7 @@ claude plugin update hud@claude-mods
 
 ![hud in light mode, a normal session](docs/hud-light.png)
 
-A small card above the message box with one bar per limit:
+A small card above the message box with one bar per limit your plan reports:
 
 - **Context** is how full the context window is. The bar is split by what's filling it (system prompt, tools, MCP tools, skills, memory, then your conversation), and a dotted line marks where auto-compact starts.
 - **5-hour** and **Weekly** are your plan's usage limits. The solid part is what you've used. The small tick is even pace: how much of the window's time has gone by. If the fill is past the tick, you're spending faster than the clock. The dashed tail shows where you'll land when the limit resets if you keep this pace (`lands ~78%`).
@@ -57,9 +57,11 @@ Both wait while Claude is working.
 
 `/hud off` hides the card, `/hud on` shows it again, and `/hud` toggles. The choice is remembered.
 
-In the terminal, the bars are drawn with block characters: `█` used, `▒` projected, `│` even pace. The terminal version also shows the model and effort, which the desktop app already shows under the message box. The card doesn't show on mobile or in VS Code, because Claude Code doesn't offer that space there.
+In the terminal, the bars are drawn with block characters: `█` used, `▒` projected, `│` even pace. The terminal version also shows the model and effort, which the desktop app already shows under the message box.
 
-**What it reads:** your session's usage figures (the same numbers as `/context`, `/cost` and the status line) and Claude Code's local estimate of what's in the context window. It sends nothing anywhere. The only command it runs on your computer is `/usr/bin/pbcopy`, to copy the handoff note on Fresh start. See [`register.tsx`](plugins/hud/hooks/register.tsx).
+The card shows in the terminal and in the Claude desktop app, for sessions running on your computer. It doesn't show in cloud sessions (claude.ai/code), on mobile, or in VS Code, because Claude Code doesn't give mods that space there.
+
+**What it reads:** your session's usage figures (the same numbers as `/context`, `/cost` and the status line) and Claude Code's local estimate of what's in the context window. It makes no network calls of its own. Fresh start is the one exception to keep in mind: it asks your current model to write the handoff note, which is a normal model request over your conversation. The only command it runs on your computer is `/usr/bin/pbcopy`, to copy that note. See [`register.tsx`](plugins/hud/hooks/register.tsx).
 
 ## Developing
 

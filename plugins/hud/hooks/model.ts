@@ -15,6 +15,8 @@ export type LimitView = {
   // When the limit runs out, if that comes before the reset.
   runsOutAt?: number
   resetsAt?: number
+  // The window already reset: `used` is from before it, until the next API response brings a new figure.
+  hasReset?: boolean
   level: Level
 }
 
@@ -42,6 +44,12 @@ export const limitView = (limit: Limit, now: number): LimitView => {
 
   if (resetsAt !== undefined && !Number.isNaN(resetsAt)) {
     view.resetsAt = resetsAt
+
+    if (resetsAt <= now) {
+      view.hasReset = true
+
+      return view
+    }
 
     if (window !== undefined) {
       const elapsed = clamp(1 - (resetsAt - now) / window, 0, 1)
@@ -116,16 +124,24 @@ export const resetText = (resetsAt: number, now: number) => {
   return ms < 6 * DAY ? `resets ${DAYS[date.getDay()]} ${clockTime(resetsAt)}` : `resets ${MONTHS[date.getMonth()]} ${date.getDate()}`
 }
 
+// The detail line in two parts, so the pace part can take the lane's warm color.
+export const laneParts = (view: LimitView, now: number): { reset: string; pace?: string } => {
+  const reset =
+    view.resetsAt === undefined ? '' : view.hasReset ? `reset at ${whenText(view.resetsAt, now)}` : resetText(view.resetsAt, now)
+  const pace =
+    view.runsOutAt !== undefined
+      ? `out ~${whenText(view.runsOutAt, now)}`
+      : view.projected !== undefined
+        ? `lands ~${Math.round(view.projected)}%`
+        : undefined
+
+  return pace === undefined ? { reset } : { reset, pace }
+}
+
 export const laneDetail = (view: LimitView, now: number) => {
-  const parts = view.resetsAt === undefined ? [] : [resetText(view.resetsAt, now)]
+  const { reset, pace } = laneParts(view, now)
 
-  if (view.runsOutAt !== undefined) {
-    parts.push(`out ~${whenText(view.runsOutAt, now)}`)
-  } else if (view.projected !== undefined) {
-    parts.push(`lands ~${Math.round(view.projected)}%`)
-  }
-
-  return parts.join(' · ')
+  return [reset, pace].filter(Boolean).join(' · ')
 }
 
 const ALERT_NAMES: Record<string, string> = { five_hour: '5-hour limit', seven_day: 'Weekly limit', spend_limit: 'Spend limit' }

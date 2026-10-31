@@ -8,6 +8,8 @@ export type Reading = {
   contextPercent?: number
   limits: Limit[]
   costUsd?: number
+  // What the engine's cost total was when this conversation began (after /clear it may keep counting).
+  costBase?: number
   startedAt: number
   at: number
 }

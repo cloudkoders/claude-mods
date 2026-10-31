@@ -67,6 +67,27 @@ const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsa
   return clock
 }
 
+// The drawn tree's Svg whose alt is `alt` (ui.find matches an Svg by type, key or text, not alt).
+const svgByAlt = (node: any, alt: string): any => {
+  if (node === null || typeof node !== 'object') {
+    return undefined
+  }
+
+  if (node.type === 'Svg' && node.props?.alt === alt) {
+    return node
+  }
+
+  for (const child of node.children ?? []) {
+    const found = svgByAlt(child, alt)
+
+    if (found !== undefined) {
+      return found
+    }
+  }
+
+  return undefined
+}
+
 const draw = async ($: any, surface: 'desktop' | 'terminal', props = band) => {
   const ui = await $.ui.mount({ plugin: 'hud', surface, component: 'AbovePrompt', props })
 
@@ -79,7 +100,9 @@ for (const surface of ['desktop', 'terminal'] as const) {
     const { drawn } = await draw($, surface)
 
     expect(drawn).toContain('97k of 1M tokens')
-    expect(drawn).toContain('resets in 1h 44m · lands ~78%')
+    // The detail is two Texts so its pace part can take the lane's warm color.
+    expect(drawn).toContain('resets in 1h 44m')
+    expect(drawn).toContain(' · lands ~78%')
     expect(drawn).toContain('Weekly')
     expect(drawn).toContain('$0.69')
     expect(drawn).toContain('"label":"Compact"')
@@ -203,4 +226,71 @@ test('no cost ledger: time only, no sparkline or rate', async ($, on) => {
   expect(drawn).toContain('9m')
   expect(drawn).not.toContain('Cost over the session')
   expect(drawn).not.toContain('/h')
+})
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`the projection text turns warm with its lane on the ${surface}`, async ($, on) => {
+    const usage = baseUsage()
+    usage.rateLimits[0].percentUsed = 88
+    await setup($, on, { usage })
+    const { ui } = await draw($, surface)
+
+    const out = await ui.find({ type: 'Text', text: /^ ?· out ~4:27 PM$/ })
+    expect(out?.props.color).toBe('#FF4F4F')
+    const lands = await ui.find({ type: 'Text', text: /^ ?· lands ~25%$/ })
+    expect(lands?.props.color).toBe('subtle')
+  })
+}
+
+test('a new conversation (/clear) starts the session cost over', async ($, on) => {
+  const usage = baseUsage()
+  usage.cost.usd = 5
+  const clock = await setup($, on, { usage })
+  const { ui } = await draw($, 'desktop')
+  usage.cost.usd = 10
+  await clock.advance(30_000)
+  usage.cost.usd = 15
+  await clock.advance(30_000)
+  expect(JSON.stringify(await ui.drawn())).toContain('Cost over the session')
+
+  // /clear: the session restarts now and the engine keeps counting cost from where it was.
+  usage.startedAt = NOW + 60_000
+  usage.cost.usd = 15.1
+  await clock.advance(30_000)
+  const drawn = JSON.stringify(await ui.drawn())
+
+  expect(drawn).toContain('$0.10')
+  expect(drawn).not.toContain('$15.10')
+  expect(drawn).not.toContain('Cost over the session')
+})
+
+test('a new conversation where the engine resets cost also starts over', async ($, on) => {
+  const usage = baseUsage()
+  usage.cost.usd = 5
+  const clock = await setup($, on, { usage })
+  const { ui } = await draw($, 'desktop')
+
+  usage.startedAt = NOW + 30_000
+  usage.cost.usd = 0.1
+  await clock.advance(30_000)
+
+  expect(JSON.stringify(await ui.drawn())).toContain('$0.10')
+})
+
+test('only animated SVGs are drawn interactive', async ($, on) => {
+  await setup($, on)
+  const calm = await draw($, 'desktop')
+  expect(calm.drawn).not.toContain('"isInteractive":true')
+
+  const working = await draw($, 'desktop', { ...band, isWorking: true })
+  expect(svgByAlt(await working.ui.drawn(), 'Context 10% used')?.props.isInteractive).toBe(true)
+})
+
+test('a lane that runs out is drawn interactive so its wall blinks', async ($, on) => {
+  const usage = baseUsage()
+  usage.rateLimits[0].percentUsed = 88
+  await setup($, on, { usage })
+  const { ui } = await draw($, 'desktop')
+
+  expect(svgByAlt(await ui.drawn(), '5-hour 88% used')?.props.isInteractive).toBe(true)
 })

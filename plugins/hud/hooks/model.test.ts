@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { alertText, burnRate, clockTime, contextLevel, laneDetail, limitView, modelName, money, resetText, span, tokens, whenText } from './model'
+import { alertText, burnRate, clockTime, contextLevel, laneDetail, laneParts, limitView, modelName, money, resetText, span, tokens, whenText } from './model'
 
 // Local times, on dates clear of daylight-saving changes. Wed Oct 14 2026, 4 PM.
 const NOW = new Date(2026, 9, 14, 16, 0).getTime()
@@ -47,11 +47,20 @@ test('warn from usage or from projection', () => {
   expect(five(67, H + 30 * MIN).level).toBe('warn') // projects ~96
 })
 
-test('a window that already rolled over clamps', () => {
-  const v = five(40, -5 * MIN)
-  expect(v.elapsed).toBe(1)
-  expect(v.projected).toBe(40)
+test('a window that already reset drops its pace until the next reading', () => {
+  const v = five(88, -5 * MIN)
+  expect(v.hasReset).toBe(true)
+  expect(v.elapsed).toBeUndefined()
+  expect(v.projected).toBeUndefined()
+  expect(v.runsOutAt).toBeUndefined()
+  expect(v.level).toBe('ok')
+  expect(laneDetail(v, NOW)).toBe('reset at 3:55 PM')
   expect(resetText(NOW - 5 * MIN, NOW)).toBe('resets in 0m')
+})
+
+test('lane detail splits into reset and pace parts', () => {
+  expect(laneParts(five(88, H + 44 * MIN), NOW)).toEqual({ reset: 'resets in 1h 44m', pace: 'out ~4:27 PM' })
+  expect(laneParts(five(2, 4 * H + 40 * MIN), NOW)).toEqual({ reset: 'resets in 4h 40m' })
 })
 
 test('a spend limit past 100 is hot with no pace', () => {
