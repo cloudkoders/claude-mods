@@ -40,7 +40,7 @@ A small card above the message box with one bar per limit your plan reports:
 
 - **Context** is how full the context window is. The bar is split by what's filling it (system prompt, tools, MCP tools, skills, memory, then your conversation), and a dotted line marks where auto-compact starts.
 - **5-hour** and **Weekly** are your plan's usage limits. The solid part is what you've used. The small tick is even pace: how much of the window's time has gone by. If the fill is past the tick, you're spending faster than the clock. The dashed tail shows where you'll land when the limit resets if you keep this pace (`lands ~78%`).
-- **Session** shows how long the session has run, a sparkline of its cost, and the cost per hour at API prices. Plans like Max don't charge this; it's there as a sense of scale.
+- **Session** shows how long the session has run, a sparkline of its cost, and what the last hour of work cost per hour at API prices. Plans like Max don't charge this; it's there as a sense of scale. An idle session drifts down to $0.00/h.
 
 When a limit is on track to run out before it resets, the bar's tail hits a blinking wall, the projection becomes the time you'll run out (`out ~4:27 PM`), and one line appears on top of the card:
 

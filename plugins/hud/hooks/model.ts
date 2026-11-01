@@ -1,6 +1,6 @@
 // Turns raw usage figures into what the card shows: pace, projection, levels and text.
 // Pure functions, no `$`, so they are tested on their own.
-import type { Limit } from '../types'
+import type { CostSample, Limit } from '../types'
 
 export type Level = 'ok' | 'warn' | 'hot'
 
@@ -170,15 +170,39 @@ export const tokens = (count: number) =>
 
 export const money = (usd: number) => `$${usd.toFixed(2)}`
 
-// Cost per hour, once the session is old enough for the figure to mean something.
-export const burnRate = (costUsd: number | undefined, startedAt: number, now: number) => {
-  const ms = now - startedAt
+// Cost per hour over the last hour of the conversation (or since its first reading, if younger).
+// Cost only changes in steps, so its value an hour ago is the last sample at or before then.
+export const burnRate = (samples: CostSample[], spent: number | undefined, now: number) => {
+  const first = samples[0]
 
-  if (costUsd === undefined || ms < 5 * MINUTE) {
+  if (spent === undefined || first === undefined) {
     return undefined
   }
 
-  return `${money(costUsd / (ms / HOUR))}/h`
+  const cutoff = now - HOUR
+  const before = [...samples].reverse().find(sample => sample.at <= cutoff)
+  const base = before === undefined ? first : { at: cutoff, usd: before.usd }
+  const ms = now - base.at
+
+  if (ms < 5 * MINUTE) {
+    return undefined
+  }
+
+  return `${money(Math.max(0, spent - base.usd) / (ms / HOUR))}/h`
+}
+
+// What burnRate needs: the samples of the last hour, plus the one before them.
+export const trimTrail = (samples: CostSample[], now: number): CostSample[] => {
+  const cutoff = now - HOUR
+  let lastBefore = -1
+
+  samples.forEach((sample, index) => {
+    if (sample.at <= cutoff) {
+      lastBefore = index
+    }
+  })
+
+  return lastBefore <= 0 ? samples : samples.slice(lastBefore)
 }
 
 // claude-opus-5-5[1m] -> Opus 5.5 1M; claude-haiku-4-5-20251001 -> Haiku 4.5

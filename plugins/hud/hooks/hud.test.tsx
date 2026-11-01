@@ -299,7 +299,8 @@ test('stacked buttons get a row between them so they never overlap', async ($, o
   await setup($, on, { usage: { ...baseUsage(), rateLimits: [] } })
   const { ui } = await draw($, 'desktop')
 
-  expect((await ui.find({ type: 'Box', key: 'actions' }))?.props.rowGap).toBe(1)
+  // A Box of Buttons with no `gap` is spaced by the desktop's own rule; the original card always sets one.
+  expect((await ui.find({ type: 'Box', key: 'actions' }))?.props.gap).toBe('xs')
 })
 
 test('/hud answers in plain words', async ($, on) => {
@@ -307,4 +308,29 @@ test('/hud answers in plain words', async ($, on) => {
 
   expect((await $.command.run({ command: 'hud', args: 'off' } as any)).text).toBe('Card hidden. Run /hud to show it again.')
   expect((await $.command.run({ command: 'hud', args: 'on' } as any)).text).toBe('Card shown.')
+})
+
+test('fixed parts of a lane never shrink; the detail takes what is left and truncates', async ($, on) => {
+  await setup($, on)
+  const { ui } = await draw($, 'desktop')
+
+  for (const key of ['context', 'limit-seven_day']) {
+    expect((await ui.find({ type: 'Box', key: `${key}-label` }))?.props.flexShrink).toBe(0)
+    expect((await ui.find({ type: 'Box', key: `${key}-bar` }))?.props.flexShrink).toBe(0)
+    expect((await ui.find({ type: 'Box', key: `${key}-percent` }))?.props.flexShrink).toBe(0)
+    const detail = await ui.find({ type: 'Box', key: `${key}-detail` })
+    expect(detail?.props.flexGrow).toBe(1)
+    expect(detail?.props.width).toBe(0)
+  }
+})
+
+test('$/h appears once there is ten minutes of spending to measure', async ($, on) => {
+  const usage = baseUsage()
+  usage.cost.usd = 0.2
+  const clock = await setup($, on, { usage })
+  const { ui } = await draw($, 'desktop')
+  usage.cost.usd = 0.7
+  await clock.advance(10 * MIN)
+
+  expect(JSON.stringify(await ui.drawn())).toContain('$0.70 · $3.00/h')
 })

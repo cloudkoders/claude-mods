@@ -110,7 +110,7 @@ All times are `$.clock.now()` milliseconds.
 
 **Runs out:** when the projection is over 100%. The rate is `used / elapsedMs`, and run-out time is `now + (100 - used) / rate`. Shown as a clock time (`4:27 PM`). The alert gives how long before the reset that is (`1h 17m before it resets`).
 
-**Burn rate:** session `cost / hours since start`, shown once the session is 5 minutes old.
+**Burn rate:** cost over the last hour of the conversation (or since its first reading, if younger), shown once there are 5 minutes to measure. Cost changes in steps, so its value an hour ago is the last sample at or before then. (Changed in 0.1.2: dividing by the whole session made a 6-day session read $0.02/h.)
 
 **Sparkline:** the last 24 distinct cost readings, kept in `$.state` for the session. Hidden until there are at least 3.
 

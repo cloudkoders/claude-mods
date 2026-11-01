@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { alertText, burnRate, clockTime, contextLevel, laneDetail, laneParts, limitView, modelName, money, resetText, span, tokens, whenText } from './model'
+import { alertText, burnRate, clockTime, contextLevel, laneDetail, laneParts, limitView, modelName, money, resetText, span, tokens, trimTrail, whenText } from './model'
 
 // Local times, on dates clear of daylight-saving changes. Wed Oct 14 2026, 4 PM.
 const NOW = new Date(2026, 9, 14, 16, 0).getTime()
@@ -82,9 +82,6 @@ test('formatting', () => {
   expect(tokens(1_500_000)).toBe('1.5M')
   expect(money(0.69)).toBe('$0.69')
   expect(money(41.2)).toBe('$41.20')
-  expect(burnRate(0.69, NOW - 9 * MIN, NOW)).toBe('$4.60/h')
-  expect(burnRate(0.2, NOW - 4 * MIN, NOW)).toBeUndefined()
-  expect(burnRate(undefined, NOW - H, NOW)).toBeUndefined()
   expect(clockTime(new Date(2026, 9, 14, 17, 0).getTime())).toBe('5 PM')
   expect(whenText(new Date(2026, 9, 18, 15, 0).getTime(), NOW)).toBe('Sun 3 PM')
   expect(contextLevel(74)).toBe('warn')
@@ -92,4 +89,28 @@ test('formatting', () => {
   expect(contextLevel(undefined)).toBe('ok')
   expect(modelName('claude-opus-5-5[1m]')).toBe('Opus 5.5 1M')
   expect(modelName('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
+})
+
+test('burn rate covers the last hour of activity, not the whole session', () => {
+  // A young session: from its first reading.
+  expect(burnRate([{ at: NOW - 9 * MIN, usd: 0 }], 0.69, NOW)).toBe('$4.60/h')
+  // Too little time to say, or nothing to count.
+  expect(burnRate([{ at: NOW - 4 * MIN, usd: 0 }], 0.2, NOW)).toBeUndefined()
+  expect(burnRate([{ at: NOW - H, usd: 0 }], undefined, NOW)).toBeUndefined()
+  expect(burnRate([], 1, NOW)).toBeUndefined()
+  // Six days old: only the last hour counts. Cost was 80 an hour ago (its last change before then).
+  expect(burnRate([{ at: NOW - 6 * 24 * H, usd: 0 }, { at: NOW - 2 * H, usd: 80 }, { at: NOW - 30 * MIN, usd: 82 }], 84.22, NOW)).toBe('$4.22/h')
+  // Idle for the last hour.
+  expect(burnRate([{ at: NOW - 6 * 24 * H, usd: 0 }, { at: NOW - 3 * H, usd: 84.22 }], 84.22, NOW)).toBe('$0.00/h')
+})
+
+test('the cost trail keeps the last hour plus the reading before it', () => {
+  const trail = [
+    { at: NOW - 3 * H, usd: 1 },
+    { at: NOW - 2 * H, usd: 2 },
+    { at: NOW - 30 * MIN, usd: 3 },
+    { at: NOW - MIN, usd: 4 },
+  ]
+  expect(trimTrail(trail, NOW)).toEqual(trail.slice(1))
+  expect(trimTrail(trail.slice(2), NOW)).toEqual(trail.slice(2))
 })

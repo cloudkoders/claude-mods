@@ -6,12 +6,13 @@ import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 import type { Action, Breakdown, Reading, TurnInfo } from '../types'
 import { contextSvg, HUE, hueFor, laneSvg, sparkSvg, terminalBar } from './draw'
 import type { Run } from './draw'
-import { alertText, burnRate, contextLevel, laneParts, limitView, modelName, money, span, tokens } from './model'
+import { alertText, burnRate, contextLevel, laneParts, limitView, modelName, money, span, tokens, trimTrail } from './model'
 import type { LimitView } from './model'
 
 const reading = atom({ plugin: 'hud', key: 'reading' } as const, null)
 const breakdown = atom({ plugin: 'hud', key: 'breakdown' } as const, null)
 const costHistory = atom({ plugin: 'hud', key: 'costHistory' } as const, [])
+const costTrail = atom({ plugin: 'hud', key: 'costTrail' } as const, [])
 const turn = atom({ plugin: 'hud', key: 'turn' } as const, {})
 const isOn = atom({ plugin: 'hud', key: 'isOn' } as const, true)
 const action = atom({ plugin: 'hud', key: 'action' } as const, 'idle')
@@ -68,12 +69,18 @@ const refresh = async ($: EngineInterface) => {
 
   if (isNewConversation) {
     await update($, costHistory, () => (cost === undefined ? [] : [cost - costBase]))
+    await update($, costTrail, () => (cost === undefined ? [] : [{ at: now, usd: cost - costBase }]))
   } else if (cost !== undefined) {
     const spent = cost - costBase
-    const history = await read($, costHistory)
+    const [history, trail] = await Promise.all([read($, costHistory), read($, costTrail)])
 
     if (history[history.length - 1] !== spent) {
       await update($, costHistory, old => (old[old.length - 1] === spent ? old : [...old, spent].slice(-HISTORY)))
+    }
+
+    // A sample only when the cost moves: it changes in steps, and burnRate reads the steps.
+    if (trail[trail.length - 1]?.usd !== spent) {
+      await update($, costTrail, old => (old[old.length - 1]?.usd === spent ? old : trimTrail([...old, { at: now, usd: spent }], now)))
     }
   }
 }
@@ -231,7 +238,13 @@ export const register: Register = on => {
       return below
     }
 
-    const [parts, history, turnInfo, current] = await Promise.all([read($, breakdown), read($, costHistory), read($, turn), read($, action)])
+    const [parts, history, trail, turnInfo, current] = await Promise.all([
+      read($, breakdown),
+      read($, costHistory),
+      read($, costTrail),
+      read($, turn),
+      read($, action),
+    ])
     const { Box, Button, Text } = $.ui.resolve(e)
     // The terminal has no Svg: its bars are block characters.
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
@@ -243,7 +256,7 @@ export const register: Register = on => {
     const contextDetail = contextPct === undefined ? `${tokens(data.contextWindow)} window` : `${tokens(data.contextTokens ?? 0)} of ${tokens(data.contextWindow)} tokens`
     const contextText = contextPct === undefined ? '—' : `${contextPct}%`
     const spent = data.costUsd === undefined ? undefined : data.costUsd - (data.costBase ?? 0)
-    const costText = [spent === undefined ? undefined : money(spent), burnRate(spent, data.startedAt, now)].filter(Boolean).join(' · ')
+    const costText = [spent === undefined ? undefined : money(spent), burnRate(trail, spent, now)].filter(Boolean).join(' · ')
     const sessionTime = span(now - data.startedAt)
 
     const warmColor = (kind: string, level: LimitView['level']) => (level === 'ok' ? undefined : hueFor(kind, level))
@@ -385,20 +398,25 @@ export const register: Register = on => {
 
     // Only an SVG that animates needs the sandboxed frame; the rest draw as plain images.
     const lane = (key: string, label: string, svg: string, alt: string, isAnimated: boolean, percent: string, percentColor: string | undefined, detail: Detail) => (
+      // The label, bar and percent keep their size so every row lines up; the detail takes what's left and truncates.
       <Box key={key} flexDirection="row" alignItems="center" columnGap={1}>
-        <Box width={8}>
+        <Box key={`${key}-label`} width={8} flexShrink={0}>
           <Text color="subtle">{label}</Text>
         </Box>
-        {isAnimated ? <Svg source={svg} alt={alt} width={190} height={16} isInteractive /> : <Svg source={svg} alt={alt} width={190} height={16} />}
-        <Box width={5} justifyContent="flex-end">
+        <Box key={`${key}-bar`} flexShrink={0}>
+          {isAnimated ? <Svg source={svg} alt={alt} width={190} height={16} isInteractive /> : <Svg source={svg} alt={alt} width={190} height={16} />}
+        </Box>
+        <Box key={`${key}-percent`} width={5} flexShrink={0} justifyContent="flex-end">
           <Text bold tabular color={percentColor}>
             {percent}
           </Text>
         </Box>
-        <Text color="subtle" wrap="truncate-end">
-          {detail.reset}
-          {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
-        </Text>
+        <Box key={`${key}-detail`} flexGrow={1} flexShrink={1} width={0}>
+          <Text color="subtle" wrap="truncate-end">
+            {detail.reset}
+            {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
+          </Text>
+        </Box>
       </Box>
     )
 
@@ -428,7 +446,7 @@ export const register: Register = on => {
     ]
 
     const session = (
-      <Box key="session" flexDirection="column" minWidth={14}>
+      <Box key="session" flexDirection="column" minWidth={14} flexShrink={0}>
         <Text>
           <Text color="subtle">Session </Text>
           <Text bold>{sessionTime}</Text>
@@ -449,12 +467,12 @@ export const register: Register = on => {
             </Box>
           )}
           <Box key="card" flexDirection="row" alignItems="center" columnGap={3}>
-            <Box key="lanes" flexDirection="column" flexGrow={1} flexShrink={1}>
+            <Box key="lanes" flexDirection="column" flexGrow={1} flexShrink={1} width={0}>
               {lanes}
             </Box>
             {session}
-            {/* A row between the buttons: a card only two lines tall otherwise draws them on top of each other. */}
-            <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center" rowGap={1}>
+            {/* Always a gap: a Box of Buttons without one is spaced by the desktop's own rule, which stacked them on top of each other. */}
+            <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center" gap="xs" flexShrink={0}>
               {buttons}
             </Box>
           </Box>

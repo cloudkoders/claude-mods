@@ -16,6 +16,9 @@ export type Reading = {
 
 export type Segment = { name: string; tokens: number }
 
+// The conversation's cost at a moment, kept for the last hour so $/h measures recent spending.
+export type CostSample = { at: number; usd: number }
+
 // What fills the context window, from the engine's local estimate. autoCompactAt is a fraction of the window, 0..1.
 export type Breakdown = { segments: Segment[]; autoCompactAt?: number }
 
@@ -30,6 +33,7 @@ declare module 'claude-code' {
       reading: Reading | null
       breakdown: Breakdown | null
       costHistory: number[]
+      costTrail: CostSample[]
       turn: TurnInfo
       isOn: boolean
       action: Action
