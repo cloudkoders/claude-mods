@@ -140,20 +140,20 @@ Every mode draws the same items (context, then each limit), the same alert line 
 - **Instrument:** a 56px dial per item (270-degree arc, ticks, percent inside in the item's hue, a rim triangle for even pace, a dotted projection arc, a glow when hot, interactive only when hot) with label, reset and pace lines beside it. The session column shows the time, the cost on a flip counter (dark tiles, light digits, readable on both themes) and `$/h burn`.
 - **Terminal:** the Runway block bars in every mode.
 
-## Buttons and commands
+## Commands (buttons removed in 0.3.0)
 
-Both buttons carry over from the original.
+The card has no buttons: stacked Buttons drew on top of each other in the desktop app, and both were shortcuts. `/compact` is Claude Code's own.
 
-- **Compact** runs `/compact`. It's the primary button when context is at 70% or more. It is dimmed while Claude works, and pressing it then shows a toast instead of compacting.
-- **Fresh start:** the first press arms it (`Press again to start fresh`) for 5 seconds. The second press asks the model for a handoff note (`$.model.fork`), runs `/clear`, and puts the note in as the new conversation's first message. It also tries to copy the note to the macOS clipboard and says whether it worked. It needs `/clear` to exist and toasts if it doesn't.
+- `/hud fresh`: Claude writes a handoff note (`$.model.fork`), the conversation clears (`/clear`), and the note becomes the new conversation's first message. It also tries to copy the note to the macOS clipboard. The command replies at once (`Writing a handoff note. The conversation clears when it is ready.`) and runs the handoff just after, from a `$.clock.after(0)` callback, because the engine refuses `/clear` from inside a `command.run` hook; the outcome arrives as a toast. A second `/hud fresh` while one runs replies `A fresh start is already under way.` It needs `/clear` to exist and says so if it doesn't.
 - `/hud`, `/hud on`, `/hud off`: show or hide the card. The choice is saved in `$.store`.
+- `/hud` is registered without `immediate`, so typed during a reply it waits for the reply to end: `/hud fresh` never clears mid-reply.
 
 ## Failure handling
 
 - A failed reading leaves the last good state on screen. The next tick tries again.
 - A failed breakdown leaves the context bar as one plain segment.
 - No rate limits (an API key with no subscription): the 5-hour and weekly lanes aren't drawn. The card shrinks to context and session.
-- Compact or Fresh start failing: a toast saying what failed, and the buttons return to idle.
+- `/hud fresh` failing: a toast saying what failed.
 
 ## State contract
 

@@ -58,12 +58,7 @@ Colors stay cool (violet, teal, blue) while you're fine. A bar turns amber at 70
 
 `/hud mode` on its own tells you the current mode. The terminal can't draw rings or dials, so it shows the Runway bars in every mode.
 
-Two buttons on the right:
-
-- **Compact** runs `/compact`. It becomes the main button once context is 70% full.
-- **Fresh start** asks Claude for a short handoff note (goal, current state, decisions, files, next steps), clears the conversation, and starts the new one with that note. Press it twice to confirm. On macOS the note is also copied to your clipboard.
-
-Both wait while Claude is working.
+**Starting fresh.** `/hud fresh` asks Claude for a short handoff note (goal, current state, decisions, files, next steps), clears the conversation, and starts the new one with that note, so a long session can get a clean slate without losing the thread. On macOS the note is also copied to your clipboard. Typed while Claude is replying, it waits for the reply to finish. To free up context without starting over, use Claude Code's own `/compact`.
 
 `/hud off` hides the card, `/hud on` shows it again, and `/hud` toggles. The choice is remembered, like the mode.
 
@@ -71,7 +66,7 @@ In the terminal, the bars are drawn with block characters: `█` used, `▒` pro
 
 The card shows in the terminal and in the Claude desktop app, for sessions running on your computer. It doesn't show in cloud sessions (claude.ai/code), on mobile, or in VS Code, because Claude Code doesn't give mods that space there.
 
-**What it reads:** your session's usage figures (the same numbers as `/context`, `/cost` and the status line) and Claude Code's local estimate of what's in the context window. It makes no network calls of its own. Fresh start is the one exception to keep in mind: it asks your current model to write the handoff note, which is a normal model request over your conversation. The only command it runs on your computer is `/usr/bin/pbcopy`, to copy that note. See [`register.tsx`](plugins/hud/hooks/register.tsx).
+**What it reads:** your session's usage figures (the same numbers as `/context`, `/cost` and the status line) and Claude Code's local estimate of what's in the context window. It makes no network calls of its own. `/hud fresh` is the one exception to keep in mind: it asks your current model to write the handoff note, which is a normal model request over your conversation. The only command it runs on your computer is `/usr/bin/pbcopy`, to copy that note. See [`register.tsx`](plugins/hud/hooks/register.tsx).
 
 ## Developing
 

@@ -1,5 +1,5 @@
 // The card's layouts: Runway, Orbit and Instrument on the desktop, and the terminal's bars (every mode).
-// They take the elements and the figures, already prepared, and hold no `$`: the buttons arrive built.
+// They take the elements and the figures, already prepared, and hold no `$`.
 import type { ElementTable, RenderChildren } from 'claude-code'
 
 import { HUE, hueFor, sparkSvg, terminalBar } from './draw'
@@ -43,7 +43,6 @@ export type Card = {
   alert?: string
   isWorking: boolean
   session: Session
-  buttons: RenderChildren[]
 }
 
 export type DesktopElements = Pick<ElementTable<'desktop'>, 'Box' | 'Text' | 'Svg'>
@@ -61,7 +60,7 @@ const detail = ({ Text }: DesktopElements, item: Item) => (
   </Text>
 )
 
-// What every desktop mode shares: the alert line on top, then a row ending in the buttons.
+// What every desktop mode shares: the alert line on top, then the mode's row.
 const frame = ({ Box, Text, Svg }: DesktopElements, card: Card, row: RenderChildren[]) => (
   <Box flexDirection="column" paddingX={1} rowGap={1}>
     {card.alert === undefined ? null : (
@@ -72,10 +71,6 @@ const frame = ({ Box, Text, Svg }: DesktopElements, card: Card, row: RenderChild
     )}
     <Box key="card" flexDirection="row" alignItems="center" columnGap={3}>
       {row}
-      {/* Always a gap: a Box of Buttons without one is spaced by the desktop's own rule, which stacked them on top of each other. */}
-      <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center" gap="xs" flexShrink={0}>
-        {card.buttons}
-      </Box>
     </Box>
   </Box>
 )
@@ -246,16 +241,11 @@ export const terminalCard = ({ Box, Text }: TerminalElements, card: Card, cells:
         </Text>
       )}
       {card.items.map(line)}
-      <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
-        <Text wrap="truncate-end">
-          <Text color="subtle">{'Session'.padEnd(9)}</Text>
-          <Text bold>{session.time}</Text>
-          <Text color="subtle">{[session.costText === '' ? '' : `  API ≈ ${session.costText}`, modelText === '' ? '' : `  ${modelText}`].join('')}</Text>
-        </Text>
-        <Box flexDirection="row" columnGap={1}>
-          {card.buttons}
-        </Box>
-      </Box>
+      <Text wrap="truncate-end">
+        <Text color="subtle">{'Session'.padEnd(9)}</Text>
+        <Text bold>{session.time}</Text>
+        <Text color="subtle">{[session.costText === '' ? '' : `  API ≈ ${session.costText}`, modelText === '' ? '' : `  ${modelText}`].join('')}</Text>
+      </Text>
     </Box>
   )
 }

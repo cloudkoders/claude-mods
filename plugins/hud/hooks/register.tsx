@@ -22,7 +22,6 @@ const MODE_NAMES: Record<Mode, string> = { orbit: 'Orbit', runway: 'Runway', ins
 const isMode = (value: unknown): value is Mode => value === 'orbit' || value === 'runway' || value === 'instrument'
 
 const REFRESH_MS = 30_000
-const CONFIRM_MS = 5_000
 const HISTORY = 24
 
 // The labels the desktop app's effort picker uses.
@@ -106,19 +105,6 @@ const refreshBreakdown = async ($: EngineInterface) => {
 
 const setAction = ($: EngineInterface, next: Action) => update($, action, () => next)
 
-const compact = async ($: EngineInterface) => {
-  await setAction($, 'compacting')
-
-  try {
-    await $.command.run({ command: 'compact' })
-  } catch (error) {
-    $.ui.toast(`Couldn't compact: ${error instanceof Error ? error.message : String(error)}`)
-  } finally {
-    await setAction($, 'idle')
-    void refresh($).catch(swallow)
-  }
-}
-
 // A backup of the note, on the macOS clipboard: the desktop app gives mods no clipboard of its own.
 const copyNote = async ($: EngineInterface, note: string) => {
   try {
@@ -130,22 +116,24 @@ const copyNote = async ($: EngineInterface, note: string) => {
   }
 }
 
-const freshStart = async ($: EngineInterface) => {
+// /hud fresh: Claude writes a handoff note, the conversation clears, and the new one starts from the note.
+// Answers what happened, as the command's reply.
+const freshStart = async ($: EngineInterface): Promise<string> => {
+  if ((await read($, action)) === 'handoff') {
+    return 'A fresh start is already under way.'
+  }
+
   await setAction($, 'handoff')
 
   try {
     if (!(await $.command.list()).some(command => command.name === 'clear')) {
-      $.ui.toast("Fresh start needs /clear, which this app doesn't offer.")
-
-      return
+      return "Fresh start needs /clear, which this app doesn't offer."
     }
 
     const reply = await $.model.fork({ prompt: HANDOFF_PROMPT })
 
     if (!reply.isAnswered) {
-      $.ui.toast(reply.reason === 'nothing-to-fork' ? 'Nothing to hand off yet.' : `Couldn't write the handoff note (${reply.reason}).`)
-
-      return
+      return reply.reason === 'nothing-to-fork' ? 'Nothing to hand off yet.' : `Couldn't write the handoff note (${reply.reason}).`
     }
 
     const note = reply.text.trim()
@@ -159,9 +147,10 @@ const freshStart = async ($: EngineInterface) => {
     await $.session.append({
       message: { type: 'system', content: [{ type: 'text', text: `Fresh start. Claude has this handoff note from the last session:\n\n${note}` }] },
     })
-    $.ui.toast(isCopied ? 'Fresh start. The handoff note is also on your clipboard.' : 'Fresh start. Claude has the handoff note.')
+
+    return isCopied ? 'Fresh start. Claude has the handoff note, and it is also on your clipboard.' : 'Fresh start. Claude has the handoff note.'
   } catch (error) {
-    $.ui.toast(`Fresh start stopped: ${error instanceof Error ? error.message : String(error)}`)
+    return `Fresh start stopped: ${error instanceof Error ? error.message : String(error)}`
   } finally {
     await setAction($, 'idle')
     void refresh($).catch(swallow)
@@ -173,9 +162,9 @@ export const register: Register = on => {
     const started = await next(e)
     await $.command.register({
       name: 'hud',
-      description: 'Show or hide the hud card above the message box',
-      argumentHint: '[on|off|mode orbit|runway|instrument]',
-      immediate: true,
+      description: 'Show or hide the hud card, switch its look, or start fresh with a handoff note',
+      // Not `immediate`: typed during a reply, it waits for the reply to end, so /hud fresh never clears mid-reply.
+      argumentHint: '[on|off|fresh|mode orbit|runway|instrument]',
     })
     const saved = await $.store.get('isOn')
     await update($, isOn, () => saved !== false)
@@ -225,6 +214,18 @@ export const register: Register = on => {
   on('command.run', { command: 'hud' }, async ($, e) => {
     const [word = '', ...rest] = e.args.trim().split(/\s+/)
 
+    if (word.toLowerCase() === 'fresh') {
+      if ((await read($, action)) === 'handoff') {
+        return { text: 'A fresh start is already under way.' }
+      }
+
+      // The engine won't run /clear from inside this hook (it would wait on the command being answered),
+      // so the handoff runs just after, and its outcome arrives as a toast.
+      $.clock.after(0, () => void freshStart($).then(message => $.ui.toast(message)).catch(swallow))
+
+      return { text: 'Writing a handoff note. The conversation clears when it is ready.' }
+    }
+
     if (word.toLowerCase() === 'mode') {
       const asked = rest.join(' ').trim()
       const wanted = asked.toLowerCase()
@@ -267,15 +268,14 @@ export const register: Register = on => {
       return below
     }
 
-    const [parts, history, trail, turnInfo, current, look] = await Promise.all([
+    const [parts, history, trail, turnInfo, look] = await Promise.all([
       read($, breakdown),
       read($, costHistory),
       read($, costTrail),
       read($, turn),
-      read($, action),
       read($, mode),
     ])
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
     // The terminal has no Svg: its bars are block characters, in every mode.
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     const now = data.at
@@ -321,56 +321,6 @@ export const register: Register = on => {
       isBarAnimated: view.runsOutAt !== undefined,
     }))
 
-    // ---------- buttons, shared ----------
-
-    const isBusy = e.props.isWorking || current === 'compacting' || current === 'handoff'
-
-    const onCompact = () => {
-      if (isBusy) {
-        $.ui.toast('Wait until Claude finishes, then compact.')
-
-        return
-      }
-
-      void compact($)
-    }
-
-    const onFreshStart = async () => {
-      if (isBusy) {
-        $.ui.toast('Wait until Claude finishes, then start fresh.')
-
-        return
-      }
-
-      // First press asks; a second press within a few seconds goes ahead.
-      if (current !== 'confirm') {
-        await setAction($, 'confirm')
-        // One read-and-write, so a press that lands as the timer fires (Compacting, the handoff) stands.
-        $.clock.after(CONFIRM_MS, () => void update($, action, now => (now === 'confirm' ? 'idle' : now)).catch(swallow))
-
-        return
-      }
-
-      void freshStart($)
-    }
-
-    const buttons = [
-      <Button
-        key="compact"
-        label={current === 'compacting' ? 'Compacting…' : 'Compact'}
-        variant={(contextPct ?? 0) >= 70 ? 'primary' : 'secondary'}
-        dimColor={isBusy && current !== 'compacting'}
-        onPress={onCompact}
-      />,
-      <Button
-        key="fresh"
-        label={current === 'handoff' ? 'Writing handoff…' : current === 'confirm' ? 'Press again to start fresh' : 'Fresh start'}
-        variant={current === 'confirm' ? 'primary' : 'secondary'}
-        dimColor={isBusy && current !== 'handoff'}
-        onPress={onFreshStart}
-      />,
-    ]
-
     const card: Card = {
       items: [contextItem, ...limitItems],
       alert,
@@ -383,7 +333,6 @@ export const register: Register = on => {
         history,
         sparkColor: alert === undefined ? HUE.context : HUE.warn,
       },
-      buttons,
     }
 
     if (Svg === undefined) {

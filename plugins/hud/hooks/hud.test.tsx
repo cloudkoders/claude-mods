@@ -28,9 +28,9 @@ const baseUsage = () =>
     cost: { usd: 0.69 },
   }) as any
 
-type Setup = { usage?: any; calls?: string[]; failUsage?: boolean; surfaces?: string[]; store?: Record<string, unknown> }
+type Setup = { usage?: any; calls?: string[]; failUsage?: boolean; surfaces?: string[]; store?: Record<string, unknown>; registered?: any[]; fork?: any }
 
-const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsage = false, surfaces = ['desktop'], store = {} }: Setup = {}) => {
+const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsage = false, surfaces = ['desktop'], store = {}, registered = [], fork = { isAnswered: true, text: 'Goal: ship the HUD.', usage: {} } }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on, store)
   on('session.usage', (_$: unknown, e: { breakdown?: string }) => {
@@ -44,7 +44,11 @@ const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsa
   on('session.surfaces', () => ({ value: surfaces }) as any)
   on('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('turn.complete', (_$: unknown, e: { answer: string }) => ({ text: e.answer }))
-  on('command.register', () => ({ value: undefined }) as any)
+  on('command.register', (_$: unknown, e: unknown) => {
+    registered.push(e)
+
+    return { value: undefined } as any
+  })
   on('command.list', () => ({ value: [{ name: 'clear' }, { name: 'compact' }] }) as any)
   on('command.run', (_$: unknown, e: { command: string }) => {
     calls.push(`/${e.command}`)
@@ -54,7 +58,7 @@ const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsa
   on('model.fork', () => {
     calls.push('fork')
 
-    return { value: { isAnswered: true, text: 'Goal: ship the HUD.', usage: {} } } as any
+    return { value: fork } as any
   })
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }) as any)
   on('ui.toast', (_$: unknown, e: { text: string }) => {
@@ -106,8 +110,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(drawn).toContain(' · lands ~78%')
     expect(drawn).toContain('Weekly')
     expect(drawn).toContain('$0.69')
-    expect(drawn).toContain('"label":"Compact"')
-    expect(drawn).toContain('"label":"Fresh start"')
+    // No buttons: /compact and /hud fresh do their jobs.
+    expect(drawn).not.toContain('"type":"Button"')
     // What other mods draw in the band stays, above the card.
     expect(drawn).toContain('"type":"engine"')
     expect(drawn.includes('"type":"Svg"')).toBe(surface === 'desktop')
@@ -155,26 +159,45 @@ test('/hud off hides the card and /hud on brings it back', async ($, on) => {
   expect(JSON.stringify(await ui.drawn())).toContain('97k of 1M tokens')
 })
 
-test('Compact runs /compact', async ($, on) => {
-  const calls: string[] = []
-  await setup($, on, { calls })
-  const { ui } = await draw($, 'desktop')
-  await ui.press({ key: 'compact' })
+// /hud fresh answers at once and does the work just after: /clear can't run from inside the command's own hook.
+const settle = async (clock: any) => {
+  for (let i = 0; i < 10; i++) {
+    await clock.advance(1)
+  }
+}
 
-  expect(calls).toContain('/compact')
+test('/hud fresh writes the handoff note, then clears', async ($, on) => {
+  const calls: string[] = []
+  const clock = await setup($, on, { calls })
+
+  const result = await $.command.run({ command: 'hud', args: 'fresh' } as any)
+  expect(result.text).toBe('Writing a handoff note. The conversation clears when it is ready.')
+  await settle(clock)
+
+  // The note is written before anything is cleared.
+  expect(calls.slice(0, 2)).toEqual(['fork', '/clear'])
+  expect(calls).toContain('toast: Fresh start. Claude has the handoff note, and it is also on your clipboard.')
 })
 
-test('Fresh start asks first, then hands off and clears', async ($, on) => {
+test('/hud fresh with nothing to hand off clears nothing', async ($, on) => {
   const calls: string[] = []
-  await setup($, on, { calls })
-  const { ui } = await draw($, 'desktop')
+  const clock = await setup($, on, { calls, fork: { isAnswered: false, reason: 'nothing-to-fork' } })
 
-  await ui.press({ key: 'fresh' })
-  expect(calls).toEqual([])
-  expect(JSON.stringify(await ui.drawn())).toContain('Press again to start fresh')
+  await $.command.run({ command: 'hud', args: 'fresh' } as any)
+  await settle(clock)
 
-  await ui.press({ key: 'fresh' })
-  expect(calls.slice(0, 2)).toEqual(['fork', '/clear'])
+  expect(calls).not.toContain('/clear')
+  expect(calls).toContain('toast: Nothing to hand off yet.')
+})
+
+test('/hud waits for a reply to finish, so a fresh start never clears mid-reply', async ($, on) => {
+  const registered: any[] = []
+  await setup($, on, { registered })
+  const hud = registered.find(command => command?.name === 'hud')
+
+  expect(hud).toBeDefined()
+  expect(hud.immediate).toBeUndefined()
+  expect(hud.argumentHint).toBe('[on|off|fresh|mode orbit|runway|instrument]')
 })
 
 test('a finished turn fills in what the context holds', async ($, on) => {
@@ -296,13 +319,16 @@ test('a lane that runs out is drawn interactive so its wall blinks', async ($, o
   expect(svgByAlt(await ui.drawn(), '5-hour 88% used')?.props.isInteractive).toBe(true)
 })
 
-test('stacked buttons get a row between them so they never overlap', async ($, on) => {
-  await setup($, on, { usage: { ...baseUsage(), rateLimits: [] } })
-  const { ui } = await draw($, 'desktop')
+for (const mode of ['runway', 'orbit', 'instrument']) {
+  test(`no buttons in ${mode} mode`, async ($, on) => {
+    await setup($, on, { usage: { ...baseUsage(), rateLimits: [] } })
+    await $.command.run({ command: 'hud', args: `mode ${mode}` } as any)
+    const { ui, drawn } = await draw($, 'desktop')
 
-  // A Box of Buttons with no `gap` is spaced by the desktop's own rule; the original card always sets one.
-  expect((await ui.find({ type: 'Box', key: 'actions' }))?.props.gap).toBe('xs')
-})
+    expect(drawn).not.toContain('"type":"Button"')
+    expect(await ui.find({ type: 'Box', key: 'actions' })).toBeUndefined()
+  })
+}
 
 test('/hud answers in plain words', async ($, on) => {
   await setup($, on)
@@ -390,7 +416,6 @@ test('Orbit draws rings with a column per bar', async ($, on) => {
   expect(drawn).toContain('"Context"')
   expect(drawn).toContain('"88%"')
   expect((await ui.find({ type: 'Text', text: /^ ?· out ~4:27 PM$/ }))?.props.color).toBe('#FF4F4F')
-  expect(drawn).toContain('"label":"Compact"')
   // No runway bars in this mode.
   expect(svgByAlt(await ui.drawn(), '5-hour 88% used')).toBeUndefined()
 })
@@ -406,7 +431,6 @@ test('Instrument draws a dial per bar and the cost counter', async ($, on) => {
   expect(svgByAlt(tree, 'Weekly dial, 7% used')).toBeDefined()
   expect(svgByAlt(tree, 'Session cost $0.69')).toBeDefined()
   expect(drawn).toContain('resets in 1h 44m')
-  expect(drawn).toContain('"label":"Fresh start"')
 })
 
 test('the terminal draws the same bars in every mode', async ($, on) => {

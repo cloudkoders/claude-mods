@@ -27,8 +27,8 @@ export type TurnInfo = { model?: string; effort?: string }
 // How the desktop card looks. The terminal draws Runway's bars in every mode.
 export type Mode = 'orbit' | 'runway' | 'instrument'
 
-// What the buttons are doing: nothing, waiting on a second press, or running.
-export type Action = 'idle' | 'confirm' | 'compacting' | 'handoff'
+// Whether /hud fresh is writing a handoff note right now.
+export type Action = 'idle' | 'handoff'
 
 declare module 'claude-code' {
   interface PluginState {
