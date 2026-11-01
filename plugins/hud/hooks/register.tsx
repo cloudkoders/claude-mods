@@ -219,7 +219,7 @@ export const register: Register = on => {
     await update($, isOn, () => shown)
     await $.store.set('isOn', shown)
 
-    return { text: shown ? 'hud shown.' : 'hud hidden. Run /hud to show it again.' }
+    return { text: shown ? 'Card shown.' : 'Card hidden. Run /hud to show it again.' }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -453,7 +453,8 @@ export const register: Register = on => {
               {lanes}
             </Box>
             {session}
-            <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center">
+            {/* A row between the buttons: a card only two lines tall otherwise draws them on top of each other. */}
+            <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center" rowGap={1}>
               {buttons}
             </Box>
           </Box>

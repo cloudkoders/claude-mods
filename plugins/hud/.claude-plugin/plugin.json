@@ -1,6 +1,6 @@
 {
   "name": "hud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A compact card above the message box: context, 5-hour and weekly limits with pace and where you'll land at reset, and session cost",
   "author": { "name": "CloudKoders" },
   "license": "MIT",

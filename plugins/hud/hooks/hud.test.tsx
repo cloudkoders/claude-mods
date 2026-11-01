@@ -294,3 +294,17 @@ test('a lane that runs out is drawn interactive so its wall blinks', async ($, o
 
   expect(svgByAlt(await ui.drawn(), '5-hour 88% used')?.props.isInteractive).toBe(true)
 })
+
+test('stacked buttons get a row between them so they never overlap', async ($, on) => {
+  await setup($, on, { usage: { ...baseUsage(), rateLimits: [] } })
+  const { ui } = await draw($, 'desktop')
+
+  expect((await ui.find({ type: 'Box', key: 'actions' }))?.props.rowGap).toBe(1)
+})
+
+test('/hud answers in plain words', async ($, on) => {
+  await setup($, on)
+
+  expect((await $.command.run({ command: 'hud', args: 'off' } as any)).text).toBe('Card hidden. Run /hud to show it again.')
+  expect((await $.command.run({ command: 'hud', args: 'on' } as any)).text).toBe('Card shown.')
+})
