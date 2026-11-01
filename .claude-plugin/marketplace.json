@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "hud",
-      "description": "A compact card above the message box: context, 5-hour and weekly limits with pace and where you'll land at reset, and session cost",
+      "description": "A compact card above the message box in three looks (runway, orbit, instrument): context, 5-hour and weekly limits with pace and where you'll land at reset, and session cost",
       "author": {
         "name": "CloudKoders"
       },

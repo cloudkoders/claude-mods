@@ -24,6 +24,9 @@ export type Breakdown = { segments: Segment[]; autoCompactAt?: number }
 
 export type TurnInfo = { model?: string; effort?: string }
 
+// How the desktop card looks. The terminal draws Runway's bars in every mode.
+export type Mode = 'orbit' | 'runway' | 'instrument'
+
 // What the buttons are doing: nothing, waiting on a second press, or running.
 export type Action = 'idle' | 'confirm' | 'compacting' | 'handoff'
 
@@ -36,6 +39,7 @@ declare module 'claude-code' {
       costTrail: CostSample[]
       turn: TurnInfo
       isOn: boolean
+      mode: Mode
       action: Action
     }
   }

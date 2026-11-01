@@ -1,13 +1,13 @@
 // hud: a compact card above the message box. Context, the 5-hour and weekly limits with pace and
-// where you'll land at reset, and session cost. Desktop draws SVG bars; the terminal draws blocks.
+// where you'll land at reset, and session cost. Three desktop looks (/hud mode); the terminal draws blocks.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
-import type { Action, Breakdown, Reading, TurnInfo } from '../types'
-import { contextSvg, HUE, hueFor, laneSvg, sparkSvg, terminalBar } from './draw'
-import type { Run } from './draw'
+import type { Action, Breakdown, Mode, Reading, TurnInfo } from '../types'
+import { contextSvg, HUE, hueFor, laneSvg } from './draw'
+import { instrumentCard, orbitCard, runwayCard, terminalCard } from './layouts'
+import type { Card, Item } from './layouts'
 import { alertText, burnRate, contextLevel, laneParts, limitView, modelName, money, span, tokens, trimTrail } from './model'
-import type { LimitView } from './model'
 
 const reading = atom({ plugin: 'hud', key: 'reading' } as const, null)
 const breakdown = atom({ plugin: 'hud', key: 'breakdown' } as const, null)
@@ -16,6 +16,10 @@ const costTrail = atom({ plugin: 'hud', key: 'costTrail' } as const, [])
 const turn = atom({ plugin: 'hud', key: 'turn' } as const, {})
 const isOn = atom({ plugin: 'hud', key: 'isOn' } as const, true)
 const action = atom({ plugin: 'hud', key: 'action' } as const, 'idle')
+const mode = atom({ plugin: 'hud', key: 'mode' } as const, 'runway')
+
+const MODE_NAMES: Record<Mode, string> = { orbit: 'Orbit', runway: 'Runway', instrument: 'Instrument' }
+const isMode = (value: unknown): value is Mode => value === 'orbit' || value === 'runway' || value === 'instrument'
 
 const REFRESH_MS = 30_000
 const CONFIRM_MS = 5_000
@@ -32,10 +36,6 @@ const HANDOFF_PROMPT = [
   'Be specific: names, paths, commands, versions. Leave out pleasantries and settled detours that do not affect the next steps.',
   'Keep it under 400 words. Reply with the note alone.',
 ].join(' ')
-
-// A small red dot that pulses beside the alert.
-const ALERT_DOT =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FF4F4F"><animate attributeName="opacity" values="1;0.35;1" dur="1.8s" repeatCount="indefinite"/></circle></svg>'
 
 const swallow = () => {}
 
@@ -174,11 +174,13 @@ export const register: Register = on => {
     await $.command.register({
       name: 'hud',
       description: 'Show or hide the hud card above the message box',
-      argumentHint: '[on|off]',
+      argumentHint: '[on|off|mode orbit|runway|instrument]',
       immediate: true,
     })
     const saved = await $.store.get('isOn')
     await update($, isOn, () => saved !== false)
+    const savedMode = await $.store.get('mode')
+    await update($, mode, () => (isMode(savedMode) ? savedMode : 'runway'))
     await setAction($, 'idle')
     // A first reading that fails still leaves the timer running: the card fills in on its next tick.
     await refresh($).catch(swallow)
@@ -221,7 +223,34 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'hud' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
+    const [word = '', ...rest] = e.args.trim().split(/\s+/)
+
+    if (word.toLowerCase() === 'mode') {
+      const asked = rest.join(' ').trim()
+      const wanted = asked.toLowerCase()
+
+      if (wanted === '') {
+        return { text: `Mode: ${MODE_NAMES[await read($, mode)]}. Options: orbit, runway, instrument.` }
+      }
+
+      if (!isMode(wanted)) {
+        return { text: `No mode called "${asked}". Try orbit, runway or instrument.` }
+      }
+
+      await update($, mode, () => wanted)
+      await $.store.set('mode', wanted)
+      const notes = [`Mode set to ${MODE_NAMES[wanted]}.`]
+
+      if (!(await read($, isOn))) {
+        notes.push('The card is hidden; /hud on shows it.')
+      } else if (wanted !== 'runway' && (await $.session.surfaces().catch((): readonly string[] => [])).includes('terminal')) {
+        notes.push('The terminal shows Runway bars in every mode.')
+      }
+
+      return { text: notes.join(' ') }
+    }
+
+    const arg = word.toLowerCase()
     const shown = arg === 'on' ? true : arg === 'off' ? false : !(await read($, isOn))
     await update($, isOn, () => shown)
     await $.store.set('isOn', shown)
@@ -238,31 +267,59 @@ export const register: Register = on => {
       return below
     }
 
-    const [parts, history, trail, turnInfo, current] = await Promise.all([
+    const [parts, history, trail, turnInfo, current, look] = await Promise.all([
       read($, breakdown),
       read($, costHistory),
       read($, costTrail),
       read($, turn),
       read($, action),
+      read($, mode),
     ])
     const { Box, Button, Text } = $.ui.resolve(e)
-    // The terminal has no Svg: its bars are block characters.
+    // The terminal has no Svg: its bars are block characters, in every mode.
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     const now = data.at
     const views = data.limits.map(limit => limitView(limit, now))
     const alert = alertText(views, data.contextPercent, now)
     const contextPct = data.contextPercent
     const ctxLevel = contextLevel(contextPct)
-    const contextDetail = contextPct === undefined ? `${tokens(data.contextWindow)} window` : `${tokens(data.contextTokens ?? 0)} of ${tokens(data.contextWindow)} tokens`
-    const contextText = contextPct === undefined ? '—' : `${contextPct}%`
     const spent = data.costUsd === undefined ? undefined : data.costUsd - (data.costBase ?? 0)
-    const costText = [spent === undefined ? undefined : money(spent), burnRate(trail, spent, now)].filter(Boolean).join(' · ')
-    const sessionTime = span(now - data.startedAt)
+    const burn = burnRate(trail, spent, now)
+    const costText = [spent === undefined ? undefined : money(spent), burn].filter(Boolean).join(' · ')
+    const warmColor = (kind: string, level: Item['level']) => (level === 'ok' ? undefined : hueFor(kind, level))
 
-    const warmColor = (kind: string, level: LimitView['level']) => (level === 'ok' ? undefined : hueFor(kind, level))
-    // The pace part of a lane's detail takes the lane's warm color; the reset part stays quiet.
-    const detailOf = (view: LimitView) => ({ ...laneParts(view, now), paceColor: warmColor(view.kind, view.level) ?? 'subtle' })
-    type Detail = { reset: string; pace?: string; paceColor?: string }
+    // Every mode draws the same items: the context window, then each limit.
+    const contextItem: Item = {
+      key: 'context',
+      kind: 'context',
+      label: 'Context',
+      percentText: contextPct === undefined ? '—' : `${contextPct}%`,
+      used: contextPct ?? 0,
+      level: ctxLevel,
+      percentColor: warmColor('context', ctxLevel),
+      reset: contextPct === undefined ? `${tokens(data.contextWindow)} window` : `${tokens(data.contextTokens ?? 0)} of ${tokens(data.contextWindow)} tokens`,
+      pace: (contextPct ?? 0) >= 70 ? 'compact soon' : undefined,
+      paceColor: warmColor('context', ctxLevel) ?? 'subtle',
+      barSvg: contextSvg(contextPct ?? 0, (parts?.segments ?? []).map(segment => segment.tokens), parts?.autoCompactAt, e.props.isWorking, ctxLevel),
+      barAlt: contextPct === undefined ? 'Context: no reading yet' : `Context ${contextPct}% used`,
+      isBarAnimated: e.props.isWorking,
+    }
+    const limitItems: Item[] = views.map(view => ({
+      key: `limit-${view.kind}`,
+      kind: view.kind,
+      label: view.label,
+      percentText: `${Math.round(view.used)}%`,
+      used: view.used,
+      elapsed: view.elapsed,
+      projected: view.projected,
+      level: view.level,
+      percentColor: warmColor(view.kind, view.level),
+      ...laneParts(view, now),
+      paceColor: warmColor(view.kind, view.level) ?? 'subtle',
+      barSvg: laneSvg(view),
+      barAlt: `${view.label} ${Math.round(view.used)}% used`,
+      isBarAnimated: view.runsOutAt !== undefined,
+    }))
 
     // ---------- buttons, shared ----------
 
@@ -314,54 +371,22 @@ export const register: Register = on => {
       />,
     ]
 
-    // ---------- terminal ----------
+    const card: Card = {
+      items: [contextItem, ...limitItems],
+      alert,
+      isWorking: e.props.isWorking,
+      session: {
+        time: span(now - data.startedAt),
+        costText,
+        spentText: spent === undefined ? undefined : money(spent),
+        burn,
+        history,
+        sparkColor: alert === undefined ? HUE.context : HUE.warn,
+      },
+      buttons,
+    }
 
     if (Svg === undefined) {
-      const cells = e.props.bodyColumns < 80 ? 10 : 20
-
-      const bar = (runs: Run[], color: string) =>
-        runs.map(run =>
-          run.part === 'used' ? (
-            <Text color={color}>{run.text}</Text>
-          ) : run.part === 'projected' ? (
-            <Text color={color} dimColor>
-              {run.text}
-            </Text>
-          ) : run.part === 'tick' ? (
-            <Text>{run.text}</Text>
-          ) : (
-            <Text dimColor>{run.text}</Text>
-          ),
-        )
-
-      const line = (label: string, runs: Run[], color: string, percent: string, percentColor: string | undefined, detail: Detail) => (
-        <Text wrap="truncate-end">
-          <Text color="subtle">{label.padEnd(9)}</Text>
-          {bar(runs, color)}
-          <Text bold color={percentColor}>{` ${percent.padStart(4)}`}</Text>
-          <Text color="subtle">{`  ${detail.reset}`}</Text>
-          {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
-        </Text>
-      )
-
-      const contextLine = line(
-        'Context',
-        terminalBar(contextPct ?? 0, undefined, undefined, cells),
-        hueFor('context', ctxLevel),
-        contextText,
-        warmColor('context', ctxLevel),
-        { reset: contextDetail },
-      )
-      const limitLines = views.map(view =>
-        line(
-          view.label,
-          terminalBar(view.used, view.projected, view.elapsed, cells),
-          hueFor(view.kind, view.level),
-          `${Math.round(view.used)}%`,
-          warmColor(view.kind, view.level),
-          detailOf(view),
-        ),
-      )
       const { model, effort } = turnInfo
       const modelText = [modelName(model ?? data.model), effort === undefined ? undefined : `${EFFORT_LABELS[effort] ?? effort} effort`]
         .filter(Boolean)
@@ -370,113 +395,17 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {below}
-          <Box flexDirection="column" paddingX={1}>
-            {alert === undefined ? null : (
-              <Text wrap="truncate-end">
-                <Text color={HUE.hot}>● </Text>
-                <Text bold>{alert}</Text>
-              </Text>
-            )}
-            {contextLine}
-            {limitLines}
-            <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
-              <Text wrap="truncate-end">
-                <Text color="subtle">{'Session'.padEnd(9)}</Text>
-                <Text bold>{sessionTime}</Text>
-                <Text color="subtle">{[costText === '' ? '' : `  API ≈ ${costText}`, modelText === '' ? '' : `  ${modelText}`].join('')}</Text>
-              </Text>
-              <Box flexDirection="row" columnGap={1}>
-                {buttons}
-              </Box>
-            </Box>
-          </Box>
+          {terminalCard({ Box, Text }, card, e.props.bodyColumns < 80 ? 10 : 20, modelText)}
         </Box>
       )
     }
 
-    // ---------- desktop ----------
-
-    // Only an SVG that animates needs the sandboxed frame; the rest draw as plain images.
-    const lane = (key: string, label: string, svg: string, alt: string, isAnimated: boolean, percent: string, percentColor: string | undefined, detail: Detail) => (
-      // The label, bar and percent keep their size so every row lines up; the detail takes what's left and truncates.
-      <Box key={key} flexDirection="row" alignItems="center" columnGap={1}>
-        <Box key={`${key}-label`} width={8} flexShrink={0}>
-          <Text color="subtle">{label}</Text>
-        </Box>
-        <Box key={`${key}-bar`} flexShrink={0}>
-          {isAnimated ? <Svg source={svg} alt={alt} width={190} height={16} isInteractive /> : <Svg source={svg} alt={alt} width={190} height={16} />}
-        </Box>
-        <Box key={`${key}-percent`} width={5} flexShrink={0} justifyContent="flex-end">
-          <Text bold tabular color={percentColor}>
-            {percent}
-          </Text>
-        </Box>
-        <Box key={`${key}-detail`} flexGrow={1} flexShrink={1} width={0}>
-          <Text color="subtle" wrap="truncate-end">
-            {detail.reset}
-            {detail.pace === undefined ? null : <Text color={detail.paceColor}>{` · ${detail.pace}`}</Text>}
-          </Text>
-        </Box>
-      </Box>
-    )
-
-    const lanes: RenderChildren[] = [
-      lane(
-        'context',
-        'Context',
-        contextSvg(contextPct ?? 0, (parts?.segments ?? []).map(segment => segment.tokens), parts?.autoCompactAt, e.props.isWorking, ctxLevel),
-        contextPct === undefined ? 'Context: no reading yet' : `Context ${contextPct}% used`,
-        e.props.isWorking,
-        contextText,
-        warmColor('context', ctxLevel),
-        { reset: contextDetail },
-      ),
-      ...views.map(view =>
-        lane(
-          `limit-${view.kind}`,
-          view.label,
-          laneSvg(view),
-          `${view.label} ${Math.round(view.used)}% used`,
-          view.runsOutAt !== undefined,
-          `${Math.round(view.used)}%`,
-          warmColor(view.kind, view.level),
-          detailOf(view),
-        ),
-      ),
-    ]
-
-    const session = (
-      <Box key="session" flexDirection="column" minWidth={14} flexShrink={0}>
-        <Text>
-          <Text color="subtle">Session </Text>
-          <Text bold>{sessionTime}</Text>
-        </Text>
-        {history.length >= 3 ? <Svg source={sparkSvg(history, alert === undefined ? HUE.context : HUE.warn)} alt="Cost over the session" width={96} height={20} /> : null}
-        {costText === '' ? null : <Text color="subtle">{costText}</Text>}
-      </Box>
-    )
+    const layout = look === 'orbit' ? orbitCard : look === 'instrument' ? instrumentCard : runwayCard
 
     return (
       <Box flexDirection="column">
         {below}
-        <Box flexDirection="column" paddingX={1} rowGap={1}>
-          {alert === undefined ? null : (
-            <Box key="alert" flexDirection="row" alignItems="center" columnGap={1}>
-              <Svg source={ALERT_DOT} alt="Warning" width={10} height={10} isInteractive />
-              <Text weight="medium">{alert}</Text>
-            </Box>
-          )}
-          <Box key="card" flexDirection="row" alignItems="center" columnGap={3}>
-            <Box key="lanes" flexDirection="column" flexGrow={1} flexShrink={1} width={0}>
-              {lanes}
-            </Box>
-            {session}
-            {/* Always a gap: a Box of Buttons without one is spaced by the desktop's own rule, which stacked them on top of each other. */}
-            <Box key="actions" flexDirection="column" alignItems="flex-end" justifyContent="center" gap="xs" flexShrink={0}>
-              {buttons}
-            </Box>
-          </Box>
-        </Box>
+        {layout({ Box, Text, Svg }, card)}
       </Box>
     )
   })

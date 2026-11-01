@@ -48,6 +48,16 @@ When a limit is on track to run out before it resets, the bar's tail hits a blin
 
 Colors stay cool (violet, teal, blue) while you're fine. A bar turns amber at 70%, or when it's projected to reach 95% by reset, and red at 90% or when it will run out before reset. For the first 10% of a window there isn't enough to go on, so the projection stays hidden.
 
+### Three looks
+
+`/hud mode` switches how the card looks on the desktop. Your choice is remembered.
+
+- `/hud mode runway` (the default): one bar per limit, as above.
+- `/hud mode orbit`: nested rings, context innermost, with a column of numbers per ring. Hover a ring for its exact figures. A small dot circles the context ring while Claude works, and a ring that will run out glows.
+- `/hud mode instrument`: a small dial per limit with the percent in the middle, a triangle on the rim for even pace and a dotted arc for the projection. The session cost sits on a flip counter.
+
+`/hud mode` on its own tells you the current mode. The terminal can't draw rings or dials, so it shows the Runway bars in every mode.
+
 Two buttons on the right:
 
 - **Compact** runs `/compact`. It becomes the main button once context is 70% full.
@@ -55,7 +65,7 @@ Two buttons on the right:
 
 Both wait while Claude is working.
 
-`/hud off` hides the card, `/hud on` shows it again, and `/hud` toggles. The choice is remembered.
+`/hud off` hides the card, `/hud on` shows it again, and `/hud` toggles. The choice is remembered, like the mode.
 
 In the terminal, the bars are drawn with block characters: `█` used, `▒` projected, `│` even pace. The terminal version also shows the model and effort, which the desktop app already shows under the message box.
 

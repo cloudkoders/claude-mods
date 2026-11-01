@@ -130,6 +130,16 @@ All times are `$.clock.now()` milliseconds.
 - **Terminal:** no SVG. Each bar is 20 cells: `█` used, `▒` projected, `│` pace tick, `░` empty, colored as above. Session is one line (`Session 9m  API ≈ $0.69 · $4.60/h`), and model and effort are shown. Lane detail truncates to the band's `bodyColumns`.
 - **Mobile and VS Code:** the engine doesn't raise `AbovePrompt` there, so the HUD doesn't show.
 
+## Modes (0.2.0)
+
+`/hud mode orbit|runway|instrument` picks the desktop layout; Runway is the default. The choice is saved in `$.store` under `mode` and restored at `session.start`; an unknown saved value falls back to Runway. `/hud mode` alone replies `Mode: Runway. Options: orbit, runway, instrument.`, an unknown name replies `No mode called "x". Try orbit, runway or instrument.`, and a change replies `Mode set to Orbit.`, adding `The card is hidden; /hud on shows it.` when hidden, or `The terminal shows Runway bars in every mode.` when a terminal is attached.
+
+Every mode draws the same items (context, then each limit), the same alert line and the same buttons, at about Runway's height:
+
+- **Orbit:** one 64px interactive Svg of nested rings (context innermost) with an even-pace notch per limit, a `<title>` per ring for hover, a glow on a hot ring and a dot circling the context ring while Claude works. Beside it, a three-line column per item (hue dot and label, big percent, detail with the warm pace part) and a session column (label, time, cost and $/h).
+- **Instrument:** a 56px dial per item (270-degree arc, ticks, percent inside in the item's hue, a rim triangle for even pace, a dotted projection arc, a glow when hot, interactive only when hot) with label, reset and pace lines beside it. The session column shows the time, the cost on a flip counter (dark tiles, light digits, readable on both themes) and `$/h burn`.
+- **Terminal:** the Runway block bars in every mode.
+
 ## Buttons and commands
 
 Both buttons carry over from the original.

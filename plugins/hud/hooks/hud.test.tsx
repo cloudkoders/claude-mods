@@ -28,11 +28,11 @@ const baseUsage = () =>
     cost: { usd: 0.69 },
   }) as any
 
-type Setup = { usage?: any; calls?: string[]; failUsage?: boolean }
+type Setup = { usage?: any; calls?: string[]; failUsage?: boolean; surfaces?: string[]; store?: Record<string, unknown> }
 
-const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsage = false }: Setup = {}) => {
+const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsage = false, surfaces = ['desktop'], store = {} }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
-  mock.store(on)
+  mock.store(on, store)
   on('session.usage', (_$: unknown, e: { breakdown?: string }) => {
     if (failUsage) {
       throw new Error('not ready')
@@ -41,6 +41,7 @@ const setup = async ($: any, on: any, { usage = baseUsage(), calls = [], failUsa
     return { value: e?.breakdown ? { ...usage, context: { ...usage.context, breakdown } } : usage }
   })
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
+  on('session.surfaces', () => ({ value: surfaces }) as any)
   on('session.start', (_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('turn.complete', (_$: unknown, e: { answer: string }) => ({ text: e.answer }))
   on('command.register', () => ({ value: undefined }) as any)
@@ -333,4 +334,88 @@ test('$/h appears once there is ten minutes of spending to measure', async ($, o
   await clock.advance(10 * MIN)
 
   expect(JSON.stringify(await ui.drawn())).toContain('$0.70 · $3.00/h')
+})
+
+const setMode = async ($: any, mode: string) => (await $.command.run({ command: 'hud', args: `mode ${mode}` } as any)).text
+
+test('/hud mode reports the mode and its options; Runway is the default', async ($, on) => {
+  await setup($, on)
+
+  expect((await $.command.run({ command: 'hud', args: 'mode' } as any)).text).toBe('Mode: Runway. Options: orbit, runway, instrument.')
+})
+
+test('/hud mode switches the mode', async ($, on) => {
+  await setup($, on)
+
+  expect(await setMode($, 'orbit')).toBe('Mode set to Orbit.')
+  expect((await $.command.run({ command: 'hud', args: 'mode' } as any)).text).toBe('Mode: Orbit. Options: orbit, runway, instrument.')
+  expect(await setMode($, 'INSTRUMENT')).toBe('Mode set to Instrument.')
+})
+
+test('a new session starts in the mode saved last time', async ($, on) => {
+  await setup($, on, { store: { mode: 'instrument' } })
+
+  expect((await $.command.run({ command: 'hud', args: 'mode' } as any)).text).toBe('Mode: Instrument. Options: orbit, runway, instrument.')
+})
+
+test('a saved mode it does not know falls back to Runway', async ($, on) => {
+  await setup($, on, { store: { mode: 'sparkles' } })
+
+  expect((await $.command.run({ command: 'hud', args: 'mode' } as any)).text).toBe('Mode: Runway. Options: orbit, runway, instrument.')
+})
+
+test('/hud mode with a name it does not know lists the right ones', async ($, on) => {
+  await setup($, on)
+
+  expect(await setMode($, 'bogus')).toBe('No mode called "bogus". Try orbit, runway or instrument.')
+})
+
+test('/hud mode says so when the card is hidden, or when this is a terminal', async ($, on) => {
+  await setup($, on, { surfaces: ['terminal'] })
+  expect(await setMode($, 'orbit')).toBe('Mode set to Orbit. The terminal shows Runway bars in every mode.')
+
+  await $.command.run({ command: 'hud', args: 'off' } as any)
+  expect(await setMode($, 'runway')).toBe('Mode set to Runway. The card is hidden; /hud on shows it.')
+})
+
+test('Orbit draws rings with a column per bar', async ($, on) => {
+  const usage = baseUsage()
+  usage.rateLimits[0].percentUsed = 88
+  await setup($, on, { usage })
+  await setMode($, 'orbit')
+  const { ui, drawn } = await draw($, 'desktop')
+
+  const rings = svgByAlt(await ui.drawn(), 'Usage rings')
+  expect(rings?.props.isInteractive).toBe(true)
+  expect(drawn).toContain('"Context"')
+  expect(drawn).toContain('"88%"')
+  expect((await ui.find({ type: 'Text', text: /^ ?· out ~4:27 PM$/ }))?.props.color).toBe('#FF4F4F')
+  expect(drawn).toContain('"label":"Compact"')
+  // No runway bars in this mode.
+  expect(svgByAlt(await ui.drawn(), '5-hour 88% used')).toBeUndefined()
+})
+
+test('Instrument draws a dial per bar and the cost counter', async ($, on) => {
+  await setup($, on)
+  await setMode($, 'instrument')
+  const { ui, drawn } = await draw($, 'desktop')
+  const tree = await ui.drawn()
+
+  expect(svgByAlt(tree, 'Context dial, 10% used')).toBeDefined()
+  expect(svgByAlt(tree, '5-hour dial, 51% used')).toBeDefined()
+  expect(svgByAlt(tree, 'Weekly dial, 7% used')).toBeDefined()
+  expect(svgByAlt(tree, 'Session cost $0.69')).toBeDefined()
+  expect(drawn).toContain('resets in 1h 44m')
+  expect(drawn).toContain('"label":"Fresh start"')
+})
+
+test('the terminal draws the same bars in every mode', async ($, on) => {
+  await setup($, on)
+  const strip = (tree: unknown) => JSON.stringify(tree).replace(/"handle":\d+/g, '')
+  const runway = strip(await (await draw($, 'terminal')).ui.drawn())
+
+  for (const mode of ['orbit', 'instrument']) {
+    await setMode($, mode)
+    expect(strip(await (await draw($, 'terminal')).ui.drawn())).toBe(runway)
+  }
 })
